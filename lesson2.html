@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>P3 华文闪卡 (P3 Chinese Flashcards)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.min.js"></script>
+    <style>
+        body {
+            font-family: 'Inter', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+            overscroll-behavior: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            10%, 30%, 50%, 70%, 90% { transform: translateX(-8px); }
+            20%, 40%, 60%, 80% { transform: translateX(8px); }
+        }
+        .shake { animation: shake 0.5s ease-in-out; }
+
+        .correct-state-static {
+            background-color: #22c55e !important; /* green-500 */
+            color: white !important;
+        }
+        .correct-state-static #questionText { display: none !important; }
+        .correct-state-static #feedbackText,
+        .correct-state-static #feedbackIconContainer { color: white !important; }
+
+        .incorrect-state {
+            background-color: #ef4444 !important; /* red-500 */
+            color: white !important;
+            border-color: #b91c1c !important; /* red-700 */
+        }
+        .incorrect-state #questionText { display: none !important; }
+        .incorrect-state #feedbackText,
+        .incorrect-state #feedbackIconContainer { color: white !important; }
+
+        .annotated-sentence-container {
+            font-size: 1.5rem; /* Large font for the sentence */
+            font-weight: 600;
+            line-height: 2.5;
+            margin-bottom: 1rem;
+            color: white;
+            background-color: rgba(0, 0, 0, 0.15);
+            padding: 1rem;
+            border-radius: 0.5rem;
+        }
+        .word-anno {
+            display: inline-block;
+            text-align: center;
+            margin: 0 0.25rem;
+            padding: 0 0.1rem;
+        }
+        .word-anno .pinyin {
+            display: block;
+            font-size: 0.9rem;
+            font-weight: 400;
+            color: #fce7f3; /* A lighter pink/white for pinyin */
+        }
+        .english-explanation {
+            font-style: italic;
+            margin-top: 1rem;
+            margin-bottom: 0.75rem;
+            font-size: 0.95rem;
+            font-weight: 500;
+            color: white;
+            padding: 0.5rem;
+            background-color: rgba(255, 255, 255, 0.2);
+            border-radius: 0.375rem;
+        }
+        .explanation-box {
+            font-size: 0.9rem;
+            display: block;
+            margin-top: 0.5rem;
+            font-weight: normal;
+            background-color: rgba(0, 0, 0, 0.1);
+            padding: 0.5rem; border-radius: 0.375rem;
+        }
+        .prompt-guidance {
+             font-size: 0.875rem; display: block; margin-top: 1rem; font-weight: bold;
+        }
+
+        .choice-button, .action-button {
+            transition: all 0.2s ease-in-out;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.08);
+            border-radius: 0.5rem; font-weight: 600;
+            padding: 0.75rem 0.5rem; text-align: center;
+            border: 1px solid transparent;
+        }
+        .choice-button:hover:not(:disabled), .action-button:hover {
+            transform: translateY(-2px); box-shadow: 0 4px 8px rgba(0,0,0,0.12);
+        }
+        .choice-button:active:not(:disabled), .action-button:active {
+            transform: translateY(0px); box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+        }
+        .choice-button:disabled { opacity: 0.7; cursor: not-allowed; transform: none; }
+        .choice-button.forced-disabled-look { opacity: 0.5; }
+        .choice-button:disabled:hover { transform: none; box-shadow: 0 2px 4px rgba(0,0,0,0.08); }
+
+        .clickable-card { cursor: pointer; }
+        #progressBarFill { transition: width 0.3s ease-out; }
+        #confettiCanvas { position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 9999; }
+        
+        .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.6); align-items: center; justify-content: center; }
+        .modal-content { background-color: #fefefe; margin: auto; padding: 20px; border: 1px solid #888; width: 90%; max-width: 500px; border-radius: 0.5rem; box-shadow: 0 4px 15px rgba(0,0,0,0.2); }
+
+        .race-track-container { position: relative; width: 100%; height: 30px; margin-top: 20px; margin-bottom: 20px; z-index: 1; }
+        .race-track { position: absolute; bottom: 0; left: 0; width: calc(100% - 30px); height: 10px; background-color: #d1d5db; border-radius: 5px; z-index: 2; }
+        .race-track-fill { position: absolute; bottom: 0; left: 0; height: 10px; background-color: #3b82f6; border-radius: 5px; width: 0%; z-index: 3; transition: width 1.5s ease-out; }
+        .rocket { position: absolute; bottom: -8px; left: 0; font-size: 36px; transform: translateX(-50%); z-index: 10; transition: left 1.5s ease-out; }
+        .checkered-flag { position: absolute; bottom: -8px; right: 0; font-size: 24px; transform: translateX(50%); z-index: 10; }
+
+        #questionText { word-break: break-word; hyphens: auto; font-size: 1.75rem; }
+        @media (min-width: 768px) { #questionText { font-size: 2rem; } }
+        .choice-button { white-space: normal; word-break: break-word; line-height: 1.4; min-height: 60px; display: flex; align-items: center; justify-content: center; font-size: 1.125rem; }
+        @media (min-width: 768px) { .choice-button { font-size: 1.25rem; } }
+    </style>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body class="bg-gradient-to-br from-green-100 via-teal-100 to-emerald-100 min-h-screen flex items-center justify-center p-4">
+
+    <div id="appContainer" class="w-full max-w-md mx-auto">
+
+        <!-- Name Input Modal -->
+         <div id="nameModal" class="modal">
+             <div class="modal-content text-center">
+                 <h2 class="text-xl md:text-2xl font-semibold mb-4 text-teal-700">欢迎，小朋友！</h2>
+                 <p class="text-slate-600 mb-4">请输入你的名字，开始学习华文吧！</p>
+                 <input type="text" id="userNameInput" placeholder="你的名字" class="w-full p-2 border border-slate-300 rounded mb-4 focus:ring-teal-500 focus:border-teal-500 text-center text-lg">
+                 <button onclick="saveUserName()" class="action-button bg-teal-500 hover:bg-teal-600 text-white w-full py-3 px-6 text-lg">开始学习！</button>
+             </div>
+         </div>
+
+        <!-- Set Selection Screen -->
+        <div id="setSelectionScreen" class="hidden bg-white p-6 md:p-8 rounded-xl shadow-lg text-center">
+            <h1 class="text-2xl md:text-3xl font-bold text-teal-800 mb-2">P3 华文练习</h1>
+            <p class="text-slate-600 mb-8">请选择一个练习！</p>
+            <div id="setButtonsContainer" class="grid grid-cols-1 gap-4">
+                <!-- Buttons for flashcard sets will be dynamically added here by JS -->
+            </div>
+        </div>
+
+        <!-- Flashcard Screen -->
+        <div id="flashcardScreen" class="hidden bg-white p-6 md:p-8 rounded-xl shadow-lg">
+            <div class="mb-6">
+                <div class="flex justify-between items-center mb-2">
+                    <span class="text-sm font-medium text-slate-600">进度</span>
+                    <span id="progressText" class="text-sm font-medium text-teal-700">0 / 0</span> </div>
+                <div class="w-full bg-slate-200 rounded-full h-2.5">
+                    <div id="progressBarFill" class="bg-teal-600 h-2.5 rounded-full" style="width: 0%"></div>
+                </div>
+            </div>
+
+            <div id="flashcard" class="bg-white border border-slate-300 rounded-lg p-6 mb-6 text-center min-h-[200px] flex flex-col items-center justify-center transition-colors duration-300">
+                 <div id="flashcardContent" class="w-full flex flex-col items-center justify-center">
+                     <div id="feedbackIconContainer" class="hidden text-7xl md:text-8xl mb-2"></div>
+                     <p id="questionText" class="font-semibold text-slate-800"></p>
+                     <div id="feedbackText" class="mt-2 text-base md:text-lg font-semibold"></div>
+                     <p id="continueText" class="mt-4 text-sm text-slate-500 hidden">点击卡片继续...</p>
+                 </div>
+            </div>
+
+            <div id="answerChoices" class="grid grid-cols-1 gap-3 md:gap-4">
+                <button id="choice1" class="choice-button bg-slate-100 hover:bg-slate-200 text-slate-700"></button>
+                <button id="choice2" class="choice-button bg-slate-100 hover:bg-slate-200 text-slate-700"></button>
+                <button id="choice3" class="choice-button bg-slate-100 hover:bg-slate-200 text-slate-700"></button>
+            </div>
+             <button onclick="showSetSelection()" class="action-button mt-6 bg-slate-500 hover:bg-slate-600 text-white w-full text-sm py-3 px-6">返回选题</button>
+        </div>
+
+        <!-- Results Screen -->
+        <div id="resultsScreen" class="hidden bg-white p-6 md:p-8 rounded-xl shadow-lg text-center">
+            <h2 id="resultsHeading" class="text-2xl md:text-3xl font-bold text-teal-700 mb-4"></h2>
+            <div class="bg-emerald-500 text-white p-4 rounded-lg mb-6">
+                <p class="text-lg md:text-xl font-semibold mb-1">你的分数:</p>
+                <p id="scoreDisplay" class="text-4xl md:text-5xl font-bold italic"></p>
+            </div>
+            <div class="race-track-container">
+                <div class="race-track"></div>
+                <div id="raceTrackFill" class="race-track-fill bg-teal-500"></div>
+                <span id="rocketEl" class="rocket">🚀</span>
+                <span id="checkeredFlag" class="checkered-flag">🏁</span>
+            </div>
+            <p class="text-lg text-slate-700 mb-2">正确率: <span id="percentage" class="font-semibold"></span>%</p>
+            <p class="text-lg text-slate-700 mb-6">用时: <span id="timeTaken" class="font-semibold"></span> 秒</p>
+            <p id="encouragementText" class="text-lg text-teal-700 font-semibold mb-6"></p>
+            <div id="incorrectListContainer" class="mb-6 text-left">
+                <h3 class="text-xl font-semibold text-red-600 mb-3">复习错题:</h3>
+                <ul id="incorrectList" class="list-disc list-inside space-y-2 text-slate-600 text-sm"></ul>
+                 <p id="noIncorrectText" class="text-emerald-600 font-semibold hidden">太棒了，没有错题！</p>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <button id="redoIncorrectButton" onclick="redoIncorrect()" class="action-button bg-orange-500 hover:bg-orange-600 text-white w-full py-3 px-6">重做错题</button>
+                <button onclick="showSetSelection()" class="action-button bg-teal-500 hover:bg-teal-600 text-white w-full py-3 px-6">选择其他练习</button>
+            </div>
+        </div>
+    </div>
+    <canvas id="confettiCanvas"></canvas>
+
+   <script>
+    // --- Configuration ---
+    const QUESTIONS_PER_SET = 10; // Adjusted for P3 level and available vocab
+    const AUTO_PROCEED_DELAY = 1800;
+    const USER_NAME_STORAGE_KEY = 'p3ChineseApp_v2';
+    const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwxl5mcaKKp3rXABfN6tMDqzUMCZ7eUTUt3LeoO8xFlwlSTuJqbOMY9vNxwSatucjec/exec';
+
+    // --- NEW FLASHCARD SETS (P3 Level - Second Batch) ---
+    const allFlashcardSets = {
+        "第四组：词语认一认 (Word Recognition)": [
+            { id: 'p3s4q1', question: "妈妈说我是她的心肝（　）。", options: ["宝贝", "功课", "桌子"], correctAnswer: "宝贝", 
+              explanation: "宝贝(bǎo bèi)是爸爸妈妈对孩子的爱称。", 
+              annotatedSentence: `<span class="word-anno">我<span class="pinyin">wǒ</span></span><span class="word-anno">是<span class="pinyin">shì</span></span><span class="word-anno">她的<span class="pinyin">tā de</span></span><span class="word-anno">心肝<span class="pinyin">xīn gān</span></span><span class="word-anno">宝贝<span class="pinyin">bǎo bèi</span></span>`, 
+              englishExplanation: "English: '宝贝' (bǎo bèi) means 'treasure' or 'darling'. It's a term of endearment parents use for their children." },
+            { id: 'p3s4q2', question: "我把（　）放在桌上。", options: ["作业", "生日", "妹妹"], correctAnswer: "作业", 
+              explanation: "作业(zuò yè)是老师给的功课，可以放在桌子上写。", 
+              annotatedSentence: `<span class="word-anno">我<span class="pinyin">wǒ</span></span><span class="word-anno">把<span class="pinyin">bǎ</span></span><span class="word-anno">作业<span class="pinyin">zuò yè</span></span><span class="word-anno">放在<span class="pinyin">fàng zài</span></span><span class="word-anno">桌上<span class="pinyin">zhuō shàng</span></span>`, 
+              englishExplanation: "English: '作业' (zuò yè) means 'homework'. It makes sense to put your homework on the table (桌上)." },
+            { id: 'p3s4q3', question: "今天是我的（　），我收到了很多礼物。", options: ["生日", "功课", "游戏"], correctAnswer: "生日", 
+              explanation: "生日(shēng rì)那天我们会庆祝，还会收到礼物。", 
+              annotatedSentence: `<span class="word-anno">今天<span class="pinyin">jīn tiān</span></span><span class="word-anno">是<span class="pinyin">shì</span></span><span class="word-anno">我的<span class="pinyin">wǒ de</span></span><span class="word-anno">生日<span class="pinyin">shēng rì</span></span>`, 
+              englishExplanation: "English: '生日' (shēng rì) means 'birthday'. You receive gifts (礼物) on your birthday." },
+            { id: 'p3s4q4', question: "“妹妹”的拼音是什么？", options: ["mèi mei", "jiě jie", "gē ge"], correctAnswer: "mèi mei", 
+              explanation: "妹妹(mèi mei)指比自己小的女性兄弟姐妹。", 
+              annotatedSentence: `<div class="word-anno">妹妹<span class="pinyin">mèi mei</span></div>`, 
+              englishExplanation: "English: The pinyin for 妹妹 (younger sister) is 'mèi mei'." },
+            { id: 'p3s4q5', question: "我把写好的（　）交给老师。", options: ["作业", "宝贝", "桌子"], correctAnswer: "作业", 
+              explanation: "我们把做完的作业(zuò yè)交给老师检查。", 
+              annotatedSentence: `<span class="word-anno">我<span class="pinyin">wǒ</span></span><span class="word-anno">把<span class="pinyin">bǎ</span></span><span class="word-anno">写好的<span class="pinyin">xiě hǎo de</span></span><span class="word-anno">作业<span class="pinyin">zuò yè</span></span><span class="word-anno">交给<span class="pinyin">jiāo gěi</span></span><span class="word-anno">老师<span class="pinyin">lǎo shī</span></span>`, 
+              englishExplanation: "English: '作业' (homework) is what you hand in (交给) to the teacher after you've finished it." },
+            { id: 'p3s4q6', question: "妈妈送给我一张（　）。", options: ["生日卡", "桌子", "风筝"], correctAnswer: "生日卡", 
+              explanation: "生日卡(shēng rì kǎ)是生日时送的写着祝福的卡片。", 
+              annotatedSentence: `<span class="word-anno">妈妈<span class="pinyin">mā ma</span></span><span class="word-anno">送给我<span class="pinyin">sòng gěi wǒ</span></span><span class="word-anno">一张<span class="pinyin">yī zhāng</span></span><span class="word-anno">生日卡<span class="pinyin">shēng rì kǎ</span></span>`, 
+              englishExplanation: "English: A '生日卡' (shēng rì kǎ) is a 'birthday card', which is a common gift." },
+            { id: 'p3s4q7', question: "这个洋娃娃是我的（　）。", options: ["宝贝", "作业", "生日"], correctAnswer: "宝贝", 
+              explanation: "我们很喜欢的玩具，也可以叫它“宝贝”(bǎo bèi)。", 
+              annotatedSentence: `<span class="word-anno">这个<span class="pinyin">zhè ge</span></span><span class="word-anno">洋娃娃<span class="pinyin">yáng wá wa</span></span><span class="word-anno">是<span class="pinyin">shì</span></span><span class="word-anno">我的<span class="pinyin">wǒ de</span></span><span class="word-anno">宝贝<span class="pinyin">bǎo bèi</span></span>`, 
+              englishExplanation: "English: You can refer to a cherished toy, like a doll (洋娃娃), as your 'treasure' or '宝贝' (bǎo bèi)." },
+            { id: 'p3s4q8', question: "小猫（　）在桌子下面。", options: ["藏", "放", "写"], correctAnswer: "藏", 
+              explanation: "藏(cáng)起来就是躲起来不让别人看见。", 
+              annotatedSentence: `<span class="word-anno">小猫<span class="pinyin">xiǎo māo</span></span><span class="word-anno">藏<span class="pinyin">cáng</span></span><span class="word-anno">在<span class="pinyin">zài</span></span><span class="word-anno">桌子<span class="pinyin">zhuō zi</span></span><span class="word-anno">下面<span class="pinyin">xià miàn</span></span>`, 
+              englishExplanation: "English: '藏' (cáng) means 'to hide'. A cat hiding under a table is a common sight." },
+        ],
+        "第五组：短语读一读 (Phrase Reading)": [
+            { id: 'p3s5q1', question: "我们是（　）的好朋友。", options: ["永远", "功课", "桌上"], correctAnswer: "永远", 
+              explanation: "永远(yǒng yuǎn)的意思是时间很长，一直都是。", 
+              annotatedSentence: `<span class="word-anno">我们<span class="pinyin">wǒ men</span></span><span class="word-anno">是<span class="pinyin">shì</span></span><span class="word-anno">永远<span class="pinyin">yǒng yuǎn</span></span><span class="word-anno">的<span class="pinyin">de</span></span><span class="word-anno">好朋友<span class="pinyin">hǎo péng you</span></span>`, 
+              englishExplanation: "English: '永远' (yǒng yuǎn) means 'forever'. The sentence means 'We are friends forever'." },
+            { id: 'p3s5q2', question: "下课了，我们一起玩（　）的游戏吧！", options: ["大风吹", "长命百岁", "生日卡"], correctAnswer: "大风吹", 
+              explanation: "大风吹(dà fēng chuī)是一个很多人一起玩的游戏名字。", 
+              annotatedSentence: `<span class="word-anno">我们<span class="pinyin">wǒ men</span></span><span class="word-anno">一起<span class="pinyin">yī qǐ</span></span><span class="word-anno">玩<span class="pinyin">wán</span></span><span class="word-anno">大风吹<span class="pinyin">dà fēng chuī</span></span><span class="word-anno">的<span class="pinyin">de</span></span><span class="word-anno">游戏<span class="pinyin">yóu xì</span></span>`, 
+              englishExplanation: "English: '大风吹' (dà fēng chuī) is the name of a popular children's game, 'the great wind blows'." },
+            { id: 'p3s5q3', question: "遇到难题时，我们要先（　）。", options: ["想一想", "大风吹", "放桌上"], correctAnswer: "想一想", 
+              explanation: "想一想(xiǎng yi xiǎng)就是动脑筋思考一下。", 
+              annotatedSentence: `<span class="word-anno">遇到<span class="pinyin">yù dào</span></span><span class="word-anno">难题<span class="pinyin">nán tí</span></span><span class="word-anno">时<span class="pinyin">shí</span></span><span class="word-anno">，我们<span class="pinyin">wǒ men</span></span><span class="word-anno">要<span class="pinyin">yào</span></span><span class="word-anno">先<span class="pinyin">xiān</span></span><span class="word-anno">想一想<span class="pinyin">xiǎng yi xiǎng</span></span>`, 
+              englishExplanation: "English: '想一想' (xiǎng yi xiǎng) means 'to think for a moment'. It's good advice when you encounter a difficult problem (难题)." },
+            { id: 'p3s5q4', question: "我画了（　）送给妈妈。", options: ["一张生日卡", "一个作业", "一个妹妹"], correctAnswer: "一张生日卡", 
+              explanation: "我们可以画一张生日卡(yì zhāng shēng rì kǎ)作为礼物送出去。", 
+              annotatedSentence: `<span class="word-anno">我<span class="pinyin">wǒ</span></span><span class="word-anno">画了<span class="pinyin">huà le</span></span><span class="word-anno">一张<span class="pinyin">yī zhāng</span></span><span class="word-anno">生日卡<span class="pinyin">shēng rì kǎ</span></span><span class="word-anno">送给<span class="pinyin">sòng gěi</span></span><span class="word-anno">妈妈<span class="pinyin">mā ma</span></span>`, 
+              englishExplanation: "English: '一张生日卡' (yì zhāng shēng rì kǎ) means 'a birthday card'. It's something you can draw and give as a gift." },
+            { id: 'p3s5q5', question: "妹妹把（　）放在桌上。", options: ["写好的作业", "大风吹", "长命百岁"], correctAnswer: "写好的作业", 
+              explanation: "这是把做完的事情放好的完整句子。", 
+              annotatedSentence: `<span class="word-anno">妹妹<span class="pinyin">mèi mei</span></span><span class="word-anno">把<span class="pinyin">bǎ</span></span><span class="word-anno">写好的作业<span class="pinyin">xiě hǎo de zuò yè</span></span><span class="word-anno">放在<span class="pinyin">fàng zài</span></span><span class="word-anno">桌上<span class="pinyin">zhuō shàng</span></span>`, 
+              englishExplanation: "English: '写好的作业' (xiě hǎo de zuò yè) means 'completed homework'. The sentence describes the action of placing it on the table." },
+            { id: 'p3s5q6', question: "妈妈说她会（　）爱我。", options: ["永远", "功课", "想一想"], correctAnswer: "永远", 
+              explanation: "妈妈对孩子的爱是永远(yǒng yuǎn)的，是不会改变的。", 
+              annotatedSentence: `<span class="word-anno">妈妈<span class="pinyin">mā ma</span></span><span class="word-anno">说<span class="pinyin">shuō</span></span><span class="word-anno">她<span class="pinyin">tā</span></span><span class="word-anno">会<span class="pinyin">huì</span></span><span class="word-anno">永远<span class="pinyin">yǒng yuǎn</span></span><span class="word-anno">爱<span class="pinyin">ài</span></span><span class="word-anno">我<span class="pinyin">wǒ</span></span>`, 
+              englishExplanation: "English: '永远' (forever) is used here to describe a mother's unending love." },
+            { id: 'p3s5q7', question: "老师要我们（　），这道题怎么做。", options: ["想一想", "大风吹", "生日卡"], correctAnswer: "想一想", 
+              explanation: "老师会让学生自己先想一想(xiǎng yi xiǎng)怎么解答问题。", 
+              annotatedSentence: `<span class="word-anno">老师<span class="pinyin">lǎo shī</span></span><span class="word-anno">要<span class="pinyin">yào</span></span><span class="word-anno">我们<span class="pinyin">wǒ men</span></span><span class="word-anno">想一想<span class="pinyin">xiǎng yi xiǎng</span></span>`, 
+              englishExplanation: "English: A teacher would ask students to 'think for a moment' (想一想) about how to solve a problem." },
+            { id: 'p3s5q8', question: "外面（　）了，我们快回家吧！", options: ["刮大风", "过生日", "写作业"], correctAnswer: "刮大风", 
+              explanation: "刮大风(guā dà fēng)是天气不好的意思，所以要快点回家。", 
+              annotatedSentence: `<span class="word-anno">外面<span class="pinyin">wài miàn</span></span><span class="word-anno">刮大风<span class="pinyin">guā dà fēng</span></span><span class="word-anno">了<span class="pinyin">le</span></span>`, 
+              englishExplanation: "English: '刮大风' (guā dà fēng) means 'the wind is blowing hard'. It's a reason to hurry home." },
+        ],
+        "第六组：情景说一说 (Situational Use)": [
+            { id: 'p3s6q1', question: "祝爷爷生日快乐，（　）！", options: ["长命百岁", "大风吹", "想一想"], correctAnswer: "长命百岁", 
+              explanation: "长命百岁(cháng mìng bǎi suì)是祝福老人家健康长寿的话。", 
+              annotatedSentence: `<span class="word-anno">祝<span class="pinyin">zhù</span></span><span class="word-anno">爷爷<span class="pinyin">yé ye</span></span><span class="word-anno">生日快乐<span class="pinyin">shēng rì kuài lè</span></span><span class="word-anno">，长命百岁<span class="pinyin">cháng mìng bǎi suì</span></span>`, 
+              englishExplanation: "English: '长命百岁' (cháng mìng bǎi suì) is a traditional wish for the elderly, meaning 'May you live to be a hundred years old'." },
+            { id: 'p3s6q2', question: "你看到妹妹在哭，可以问她：", options: ["“这是怎么一回事？”", "“祝你长命百岁。”", "“我们玩大风吹吧。”"], correctAnswer: "“这是怎么一回事？”", 
+              explanation: "“这是怎么一回事？”是用来询问发生了什么事情。", 
+              annotatedSentence: `<span class="word-anno">看到<span class="pinyin">kàn dào</span></span><span class="word-anno">妹妹<span class="pinyin">mèi mei</span></span><span class="word-anno">在<span class="pinyin">zài</span></span><span class="word-anno">哭<span class="pinyin">kū</span></span><span class="word-anno">，问<span class="pinyin">wèn</span></span><span class="word-anno">：这是怎么一回事<span class="pinyin">zhè shì zěn me yī huí shì</span></span><span class="word-anno">？</span>`, 
+              englishExplanation: "English: '这是怎么一回事？' (zhè shì zěn me yī huí shì?) means 'What's going on?' or 'What happened?'. It's a good way to ask why someone is crying." },
+            { id: 'p3s6q3', question: "你想让朋友一直和你玩，可以说：", options: ["“我们永远是好朋友！”", "“你长命百岁！”", "“这是怎么一回事？”"], correctAnswer: "“我们永远是好朋友！”", 
+              explanation: "这句话表达了你想和朋友保持长久友谊的愿望。", 
+              annotatedSentence: `<span class="word-anno">我们<span class="pinyin">wǒ men</span></span><span class="word-anno">永远<span class="pinyin">yǒng yuǎn</span></span><span class="word-anno">是<span class="pinyin">shì</span></span><span class="word-anno">好朋友<span class="pinyin">hǎo péng you</span></span>`, 
+              englishExplanation: "English: Saying 'We are friends forever!' (我们永远是好朋友！) expresses your wish for a lasting friendship." },
+            { id: 'p3s6q4', question: "给奶奶送上生日卡时，可以对她说：", options: ["祝您长命百岁！", "这是怎么一回事？", "我的作业写好了。"], correctAnswer: "祝您长命百岁！", 
+              explanation: "“祝您长命百岁”是给奶奶最好的生日祝福。", 
+              annotatedSentence: `<span class="word-anno">祝您<span class="pinyin">zhù nín</span></span><span class="word-anno">长命百岁<span class="pinyin">cháng mìng bǎi suì</span></span>`, 
+              englishExplanation: "English: When giving a birthday card to your grandma, wishing her a long life ('长命百岁') is a very appropriate and kind blessing." },
+            { id: 'p3s6q5', question: "你回家看到家里乱七八糟，可以问妈妈：", options: ["“这是怎么一回事？”", "“祝您长命百岁。”", "“我们永远是好朋友。”"], correctAnswer: "“这是怎么一回事？”", 
+              explanation: "这句话是用来询问发生了什么奇怪或意想不到的事情。", 
+              annotatedSentence: `<span class="word-anno">问<span class="pinyin">wèn</span></span><span class="word-anno">妈妈<span class="pinyin">mā ma</span></span><span class="word-anno">：这是怎么一回事<span class="pinyin">zhè shì zěn me yī huí shì</span></span><span class="word-anno">？</span>`, 
+              englishExplanation: "English: If you come home to a mess, asking 'What's going on here?' ('这是怎么一回事？') is a natural reaction." },
+            { id: 'p3s6q6', question: "你想不出答案时，可以对自己说：", options: ["“让我好好想一想。”", "“祝我长命百岁。”", "“大风吹！”"], correctAnswer: "“让我好好想一想。”", 
+              explanation: "“想一想”是解决问题的第一步。", 
+              annotatedSentence: `<span class="word-anno">让<span class="pinyin">ràng</span></span><span class="word-anno">我<span class="pinyin">wǒ</span></span><span class="word-anno">好好<span class="pinyin">hǎo hǎo</span></span><span class="word-anno">想一想<span class="pinyin">xiǎng yi xiǎng</span></span>`, 
+              englishExplanation: "English: When you can't figure out an answer, telling yourself 'Let me think about it carefully' ('让我好好想一想') is a good strategy." },
+            { id: 'p3s6q7', question: "你的小狗是你最喜欢的宠物，你可以叫它：", options: ["我的宝贝", "我的作业", "我的桌子"], correctAnswer: "我的宝贝", 
+              explanation: "我们可以把心爱的宠物也叫做“宝贝”。", 
+              annotatedSentence: `<span class="word-anno">我的<span class="pinyin">wǒ de</span></span><span class="word-anno">宝贝<span class="pinyin">bǎo bèi</span></span>`, 
+              englishExplanation: "English: You can affectionately call a beloved pet (宠物) 'my treasure' or 'my darling' (我的宝贝)." },
+            { id: 'p3s6q8', question: "妹妹把你的作业放在桌上，你找不到，可以问她：", options: ["“你把作业放哪儿了？”", "“这是怎么一回事？”", "“祝你长命百岁。”"], correctAnswer: "“你把作业放哪儿了？”", 
+              explanation: "这是一个直接的问题，询问东西的位置。", 
+              annotatedSentence: `<span class="word-anno">你<span class="pinyin">nǐ</span></span><span class="word-anno">把<span class="pinyin">bǎ</span></span><span class="word-anno">作业<span class="pinyin">zuò yè</span></span><span class="word-anno">放<span class="pinyin">fàng</span></span><span class="word-anno">哪儿<span class="pinyin">nǎr</span></span><span class="word-anno">了<span class="pinyin">le</span></span><span class="word-anno">？</span>`, 
+              englishExplanation: "English: '你把作业放哪儿了？' (nǐ bǎ zuò yè fàng nǎr le?) means 'Where did you put the homework?'. It's a direct question to find a missing item." },
+        ]
+    };
+
+    // --- State Variables ---
+    let currentSetData = [];
+    let currentQuestionIndex = 0;
+    let score = 0;
+    let incorrectAnswers = [];
+    let startTime;
+    let endTime;
+    let isRedoing = false;
+    let proceedTimeoutId = null;
+    let isWaitingToProceed = false;
+    let userName = localStorage.getItem(USER_NAME_STORAGE_KEY) || '';
+
+    // --- Sound Synthesis (Tone.js) ---
+    const correctSound = new Tone.Synth({ oscillator: { type: 'triangle' }, envelope: { attack: 0.005, decay: 0.1, sustain: 0.05, release: 0.2 }, }).toDestination();
+    const incorrectSound = new Tone.Synth({ oscillator: { type: 'square' }, envelope: { attack: 0.01, decay: 0.2, sustain: 0, release: 0.2 } }).toDestination();
+
+    // --- Confetti ---
+    const confettiCanvas = document.getElementById('confettiCanvas');
+    const myConfetti = confetti.create(confettiCanvas, { resize: true, useWorker: true });
+
+    // --- DOM Elements ---
+    const nameModal = document.getElementById('nameModal');
+    const userNameInput = document.getElementById('userNameInput');
+    const setSelectionScreen = document.getElementById('setSelectionScreen');
+    const setButtonsContainer = document.getElementById('setButtonsContainer');
+    const flashcardScreen = document.getElementById('flashcardScreen');
+    const resultsScreen = document.getElementById('resultsScreen');
+    const progressText = document.getElementById('progressText');
+    const progressBarFill = document.getElementById('progressBarFill');
+    const flashcard = document.getElementById('flashcard');
+    const questionText = document.getElementById('questionText');
+    const feedbackText = document.getElementById('feedbackText');
+    const feedbackIconContainer = document.getElementById('feedbackIconContainer');
+    const continueText = document.getElementById('continueText');
+    const choiceButtons = [ document.getElementById('choice1'), document.getElementById('choice2'), document.getElementById('choice3') ];
+    const scoreDisplayEl = document.getElementById('scoreDisplay');
+    const percentageEl = document.getElementById('percentage');
+    const timeTakenEl = document.getElementById('timeTaken');
+    const incorrectListContainer = document.getElementById('incorrectListContainer');
+    const incorrectList = document.getElementById('incorrectList');
+    const noIncorrectText = document.getElementById('noIncorrectText');
+    const redoIncorrectButton = document.getElementById('redoIncorrectButton');
+    const encouragementTextEl = document.getElementById('encouragementText');
+    const resultsHeadingEl = document.getElementById('resultsHeading');
+    const raceTrackContainer = document.querySelector('#resultsScreen .race-track-container');
+    const raceTrackFillEl = document.getElementById('raceTrackFill');
+    const rocketEl = document.getElementById('rocketEl');
+
+    // --- Event Listeners ---
+    flashcard.addEventListener('click', () => {
+        if (isWaitingToProceed &&
+            !flashcard.classList.contains('incorrect-state') &&
+            (flashcard.classList.contains('correct-state-static') || flashcard.classList.contains('clickable-card'))) {
+            proceedToNext();
+        }
+    });
+    userNameInput.addEventListener('keypress', (event) => {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            saveUserName();
+        }
+    });
+
+    // --- Utility Functions ---
+    function shuffleArray(array) {
+        for (let i = array.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [array[i], array[j]] = [array[j], array[i]];
+        }
+    }
+
+    // --- Core Application Logic ---
+    function populateStartButton() {
+        setButtonsContainer.innerHTML = '';
+        Object.keys(allFlashcardSets).forEach(setName => {
+            const set = allFlashcardSets[setName];
+            if (set.length > 0) { 
+                const button = document.createElement('button');
+                button.textContent = `开始 ${setName}`;
+                button.className = `action-button w-full py-4 px-6 bg-teal-500 hover:bg-teal-600 text-white mb-3 last:mb-0 text-lg`; 
+                button.onclick = () => startFlashcardSession(set, setName);
+                setButtonsContainer.appendChild(button);
+            }
+        });
+    }
+
+    function saveUserName() {
+        const name = userNameInput.value.trim();
+        userName = name ? name : '小朋友';
+        localStorage.setItem(USER_NAME_STORAGE_KEY, userName);
+        nameModal.style.display = 'none';
+        showSetSelection();
+    }
+
+    function startFlashcardSession(selectedSet, setName) {
+        Tone.start().catch(e => console.warn("Audio context could not start:", e));
+        let fullSetCopy = [...selectedSet]; 
+        shuffleArray(fullSetCopy);
+        currentSetData = fullSetCopy.slice(0, Math.min(fullSetCopy.length, QUESTIONS_PER_SET)); 
+        currentSetData.setName = setName; 
+        currentQuestionIndex = 0;
+        score = 0;
+        incorrectAnswers = [];
+        isRedoing = false;
+        setSelectionScreen.classList.add('hidden');
+        resultsScreen.classList.add('hidden');
+        flashcardScreen.classList.remove('hidden');
+        updateProgress(); 
+        startTime = new Date();
+        displayQuestion();
+    }
+
+    function resetCardState() {
+        if (proceedTimeoutId) { clearTimeout(proceedTimeoutId); proceedTimeoutId = null; }
+        isWaitingToProceed = false;
+        flashcard.classList.remove('shake', 'correct-state-static', 'incorrect-state', 'clickable-card');
+        questionText.classList.remove('hidden');
+        feedbackText.innerHTML = '';
+        feedbackIconContainer.classList.add('hidden');
+        continueText.classList.add('hidden');
+        choiceButtons.forEach(btn => {
+            btn.className = 'choice-button bg-slate-100 hover:bg-slate-200 text-slate-700';
+        });
+    }
+
+    function displayQuestion() {
+        resetCardState();
+        if (currentQuestionIndex >= currentSetData.length) {
+            showResults();
+            return;
+        }
+        const questionData = currentSetData[currentQuestionIndex];
+        questionText.innerHTML = questionData.question.replace(/\n/g, '<br>');
+        let displayOptions = [...questionData.options];
+        shuffleArray(displayOptions);
+        choiceButtons.forEach((button, index) => {
+            if (displayOptions[index] !== undefined) {
+                button.textContent = displayOptions[index];
+                button.disabled = false;
+                button.dataset.answer = displayOptions[index];
+                button.onclick = () => checkAnswer(button);
+                button.style.display = 'flex';
+            } else {
+                button.style.display = 'none'; 
+            }
+        });
+    }
+
+    function updateProgress() {
+        const totalQuestions = currentSetData.length;
+        const completed = currentQuestionIndex;
+        const progressPercentage = totalQuestions > 0 ? (completed / totalQuestions) * 100 : 0;
+        progressText.textContent = `${completed} / ${totalQuestions}`;
+        progressBarFill.style.width = `${progressPercentage}%`;
+    }
+
+    function checkAnswer(button) {
+        Tone.start().catch(e => console.warn("Audio context failed:", e));
+        if (isWaitingToProceed && !flashcard.classList.contains('incorrect-state')) return;
+        const selectedAnswer = button.dataset.answer;
+        const questionData = currentSetData[currentQuestionIndex];
+        const correctAnswer = questionData.correctAnswer;
+        choiceButtons.forEach(btn => btn.disabled = true);
+
+        if (selectedAnswer === correctAnswer) {
+            if (!isRedoing) score++;
+            flashcard.classList.add('correct-state-static');
+            feedbackIconContainer.innerHTML = '<span class="text-7xl md:text-8xl">✓</span>';
+            feedbackIconContainer.classList.remove('hidden');
+            questionText.classList.add('hidden');
+            feedbackText.textContent = '正确!';
+            myConfetti({ particleCount: 120, spread: 80, origin: { y: 0.6 } });
+            correctSound.triggerAttackRelease("G5", "8n", Tone.now());
+            button.className = 'choice-button bg-emerald-600 text-white ring-2 ring-emerald-800 shadow-md';
+            isWaitingToProceed = true;
+            flashcard.classList.add('clickable-card');
+            continueText.classList.remove('hidden');
+            proceedTimeoutId = setTimeout(proceedToNext, AUTO_PROCEED_DELAY);
+            currentQuestionIndex++; 
+            updateProgress(); 
+        } else {
+            flashcard.classList.add('shake', 'incorrect-state');
+            feedbackIconContainer.innerHTML = '<span class="text-7xl md:text-8xl">✗</span>';
+            feedbackIconContainer.classList.remove('hidden');
+            questionText.classList.add('hidden'); 
+            
+            const annotatedSentence = questionData.annotatedSentence.replace('（　）', `<span class="word-anno" style="color:#fde047;">${correctAnswer}</span>`);
+            const englishExplanation = questionData.englishExplanation || "";
+            const chineseExplanation = questionData.explanation || "没有解析。";
+            
+            feedbackText.innerHTML = `
+                <div class="annotated-sentence-container">${annotatedSentence}</div>
+                <div class="english-explanation">${englishExplanation}</div>
+                <div class="explanation-box"><b>中文解析:</b> ${chineseExplanation}</div>
+                <div class="prompt-guidance">点击绿色正确答案继续。</div>
+            `;
+
+            incorrectSound.triggerAttackRelease("C3", "8n");
+            if (!isRedoing) {
+                incorrectAnswers.push({ questionData: questionData, userAnswer: selectedAnswer });
+            }
+            isWaitingToProceed = false;
+            flashcard.classList.remove('clickable-card');
+            if (proceedTimeoutId) { clearTimeout(proceedTimeoutId); }
+            choiceButtons.forEach(btn => {
+                if (btn.dataset.answer === correctAnswer) {
+                    btn.className = 'choice-button bg-emerald-500 hover:bg-emerald-600 text-white';
+                    btn.disabled = false;
+                    btn.onclick = function() {
+                        currentQuestionIndex++; 
+                        updateProgress(); 
+                        proceedToNext();
+                    };
+                } else if (btn === button) {
+                    btn.className = 'choice-button bg-red-700 text-white ring-2 ring-red-900 shadow-md';
+                } else {
+                    btn.className = 'choice-button bg-slate-200 text-slate-500 forced-disabled-look';
+                }
+            });
+        }
+    }
+
+    function proceedToNext() {
+        if (proceedTimeoutId) { clearTimeout(proceedTimeoutId); }
+        isWaitingToProceed = false;
+        displayQuestion();
+    }
+
+    function showResults() {
+        endTime = new Date();
+        const timeDiff = Math.round((endTime - startTime) / 1000);
+        const totalQuestions = currentSetData.length;
+        const currentScore = isRedoing ? (totalQuestions - incorrectAnswers.length) : score;
+        const percentage = totalQuestions > 0 ? Math.round((currentScore / totalQuestions) * 100) : 0;
+
+        resultsHeadingEl.textContent = isRedoing ? '错题复习完成！' : `“${currentSetData.setName || '练习'}”完成!`;
+        scoreDisplayEl.textContent = `${currentScore} / ${totalQuestions}`;
+        percentageEl.textContent = `${percentage}`;
+        timeTakenEl.textContent = `${timeDiff}`;
+
+        if (percentage === 100) encouragementTextEl.textContent = "太棒了，你是第一名！";
+        else if (percentage >= 70) encouragementTextEl.textContent = "做得很好！继续加油！";
+        else encouragementTextEl.textContent = "不错！再试一次会更好！";
+        
+        flashcardScreen.classList.add('hidden');
+        resultsScreen.classList.remove('hidden');
+        
+        requestAnimationFrame(() => {
+            setTimeout(() => { 
+                const trackWidth = raceTrackContainer.offsetWidth;
+                const effectiveTrackWidth = trackWidth - rocketEl.offsetWidth; 
+                const finalRocketPosition = Math.max(0, (percentage / 100) * effectiveTrackWidth);
+                rocketEl.style.left = `${finalRocketPosition}px`;
+                raceTrackFillEl.style.width = `${finalRocketPosition}px`;
+            }, 100);
+        });
+
+        incorrectList.innerHTML = '';
+        if (incorrectAnswers.length > 0) {
+            incorrectListContainer.classList.remove('hidden'); noIncorrectText.classList.add('hidden');
+            incorrectAnswers.forEach(item => {
+                const li = document.createElement('li');
+                li.innerHTML = `<b>问题:</b> ${item.questionData.question.replace(/\n/g, ' ')}<br/><b>你的答案:</b> <span class="text-red-500">${item.userAnswer}</span><br/><b>正确答案:</b> <span class="text-emerald-600">${item.questionData.correctAnswer}</span>`;
+                incorrectList.appendChild(li);
+            });
+            redoIncorrectButton.classList.remove('hidden');
+            redoIncorrectButton.disabled = isRedoing || incorrectAnswers.length === 0;
+        } else {
+            incorrectListContainer.classList.add('hidden'); noIncorrectText.classList.remove('hidden');
+            redoIncorrectButton.classList.add('hidden');
+        }
+
+        sendResultsToGoogleSheet({
+            setName: `P3 - ${currentSetData.setName}`, score: currentScore, totalQuestions: totalQuestions,
+            percentage: percentage, timeTaken: timeDiff,
+            incorrectAnswersJSON: JSON.stringify(incorrectAnswers.map(item => ({ q: item.questionData.question, u: item.userAnswer, c: item.questionData.correctAnswer }))),
+            name: userName, timestamp: new Date().toISOString() 
+        });
+
+        if (isRedoing) { incorrectAnswers = []; isRedoing = false; }
+    }
+
+    function sendResultsToGoogleSheet(data) {
+        fetch(APPS_SCRIPT_URL, {
+            method: 'POST', mode: 'no-cors', 
+            headers: { 'Content-Type': 'application/json' }, 
+            body: JSON.stringify({payloadType: 'flashcardResults', ...data, subject: 'P3 Chinese' })
+        }).catch(err => console.error("Failed to send results:", err));
+    }
+
+    function redoIncorrect() {
+        if (incorrectAnswers.length === 0) return;
+        const originalSetName = currentSetData.setName.replace(" (重做)", "");
+        currentSetData = incorrectAnswers.map(item => item.questionData);
+        currentSetData.setName = `${originalSetName} (重做)`;
+        currentQuestionIndex = 0;
+        incorrectAnswers = []; 
+        isRedoing = true;
+        resultsScreen.classList.add('hidden');
+        flashcardScreen.classList.remove('hidden');
+        startTime = new Date();
+        updateProgress(); 
+        displayQuestion();
+    }
+
+    function showSetSelection() {
+        if (proceedTimeoutId) { clearTimeout(proceedTimeoutId); }
+        isWaitingToProceed = false; isRedoing = false; 
+        nameModal.style.display = 'none';
+        flashcardScreen.classList.add('hidden');
+        resultsScreen.classList.add('hidden');
+        setSelectionScreen.classList.remove('hidden');
+        populateStartButton();
+    }
+
+    // --- Initialization ---
+    document.addEventListener('DOMContentLoaded', () => {
+        userName = localStorage.getItem(USER_NAME_STORAGE_KEY) || '';
+        if (userName) {
+            showSetSelection(); 
+        } else {
+            nameModal.style.display = 'flex';
+            userNameInput.focus();
+        }
+    });
+</script>
+
+</body>
+</html>
